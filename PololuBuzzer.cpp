@@ -8,7 +8,6 @@
 
 #if defined(ARDUINO_UNOR4_WIFI) || defined(ARDUINO_UNOR4_MINIMA)
   #define PB_ARDUINO_R4
-  #include <FspTimer.h>
 #endif
 
 #if defined(PB_ARDUINO_R4)
@@ -16,11 +15,19 @@
 // D3 on the Uno R3 header — same physical pin the Zumo Shield uses for the buzzer.
 #define BUZZER_PIN  3
 
-static FspTimer buzzerTimer;
-static void buzzerTimerISR();
+// R4 buzzer timing uses millis() rather than a hardware timer ISR:
+//   - tone(pin, freq, duration) drives the audio and auto-stops.
+//   - isPlaying() / playCheck() reconcile the "current note done" flag against
+//     the current wall-clock time; the user's main loop drives this by polling.
+//
+// This avoids competing with ZumoMotors' static PwmOut timers for GPT channels
+// and avoids the brittle FspTimer overflow-callback path, at the cost of
+// PLAY_AUTOMATIC no longer being truly background — sketches must call
+// isPlaying() / playCheck() regularly (all the ZumoBuzzerExample* sketches do).
+static volatile unsigned long buzzerEndTimeMs = 0;
 
-#define ENABLE_TIMER_INTERRUPT()   buzzerTimer.start()
-#define DISABLE_TIMER_INTERRUPT()  buzzerTimer.stop()
+#define ENABLE_TIMER_INTERRUPT()   /* no-op */
+#define DISABLE_TIMER_INTERRUPT()  /* no-op */
 
 #elif defined(__AVR_ATmega32U4__)
 
@@ -80,15 +87,14 @@ static void nextNote();
 
 #if defined(PB_ARDUINO_R4)
 
-// FspTimer fires at 1 kHz; each tick decrements buzzerTimeout (set to the note
-// duration in ms by playFrequency). When the note is over we silence tone() and,
-// if a sequence is playing in PLAY_AUTOMATIC, advance to the next note.
-static void buzzerTimerISR()
+// Called wherever R4 needs to reconcile "current note finished" with the wall
+// clock — from isPlaying() and playCheck(). tone()'s 3-arg form auto-stops the
+// audio output at the right time; this just flips buzzerFinished and advances
+// the sequence in PLAY_AUTOMATIC mode.
+static void r4_checkNoteTimeout()
 {
-  if (buzzerTimeout-- == 0)
+  if (!buzzerFinished && (long)(millis() - buzzerEndTimeMs) >= 0)
   {
-    DISABLE_TIMER_INTERRUPT();
-    noTone(BUZZER_PIN);
     buzzerFinished = 1;
     if (buzzerSequence && (play_mode_setting == PLAY_AUTOMATIC))
       nextNote();
@@ -146,27 +152,13 @@ inline void PololuBuzzer::init()
   }
 }
 
-// initializes timer4 (32U4), timer2 (328P), or an FspTimer (R4) for buzzer control
+// initializes timer4 (32U4), timer2 (328P), or just the pin (R4) for buzzer control
 void PololuBuzzer::init2()
 {
 #if defined(PB_ARDUINO_R4)
   pinMode(BUZZER_PIN, OUTPUT);
-
-  // Claim a free GPT channel to drive the 1 kHz timeout tick. tone() uses AGT1
-  // internally on R4, so GPT and AGT don't fight over the same peripheral.
-  uint8_t timerType = GPT_TIMER;
-  int8_t  channel   = FspTimer::get_available_timer(timerType);
-  if (channel < 0)
-  {
-    // all GPT channels taken — fall back to a forced pwm-reserved channel
-    channel = FspTimer::get_available_timer(timerType, true);
-  }
-
-  buzzerTimer.begin(TIMER_MODE_PERIODIC, timerType, channel, 1000.0f, 0.0f);
-  buzzerTimer.setup_overflow_irq(12, buzzerTimerISR);
-  buzzerTimer.open();
-  // timer stays stopped until ENABLE_TIMER_INTERRUPT() runs in playFrequency()
-  interrupts();
+  // Nothing else to set up — tone() provides the carrier and its 3-arg form
+  // provides the duration; buzzerEndTimeMs provides the bookkeeping.
   return;
 #endif
 
@@ -277,25 +269,23 @@ void PololuBuzzer::playFrequency(unsigned int freq, unsigned int dur,
     freq = 10000;      // max frequency allowed is 10kHz
 
 #if defined(PB_ARDUINO_R4)
-  // On R4 we don't compute AVR timer divisors — tone() drives the output
-  // directly. Convert 0.1 Hz units back to Hz if needed.
+  // On R4 we hand the note off to Arduino's tone() with the 3-arg duration
+  // form, which auto-stops the output when time is up. Convert 0.1 Hz units
+  // back to Hz if needed.
   unsigned int hz = (multiplier == 10) ? ((freq + 5) / 10) : freq;
 
-  // Match the AVR convention: freq == 1000 with volume == 0 means "silent note,
-  // exact ms timeout". Skip tone() in that case.
-  if (volume == 0)
+  if (volume == 0 || dur == 0)
   {
+    // Silent note or zero-duration: just mark as playing for `dur` ms so the
+    // ms-clock advances the sequence at the right time.
     noTone(BUZZER_PIN);
   }
   else
   {
-    tone(BUZZER_PIN, hz);
+    tone(BUZZER_PIN, hz, dur);
   }
 
-  DISABLE_TIMER_INTERRUPT();
-  // FspTimer ticks at 1 kHz, so timeout is exactly the note duration in ms.
-  buzzerTimeout = dur;
-  ENABLE_TIMER_INTERRUPT();
+  buzzerEndTimeMs = millis() + dur;
   return;
 #endif
 
@@ -483,6 +473,9 @@ void PololuBuzzer::playNote(unsigned char note, unsigned int dur,
 // Returns 1 if the buzzer is currently playing, otherwise it returns 0
 unsigned char PololuBuzzer::isPlaying()
 {
+#if defined(PB_ARDUINO_R4)
+  r4_checkNoteTimeout();
+#endif
   return !buzzerFinished || buzzerSequence != 0;
 }
 
@@ -570,6 +563,7 @@ void PololuBuzzer::stopPlaying()
 
 #if defined(PB_ARDUINO_R4)
   noTone(BUZZER_PIN);
+  buzzerEndTimeMs = millis();   // "ended now" — isPlaying() will see this
   buzzerFinished = 1;
   buzzerSequence = 0;
   return;
@@ -817,6 +811,9 @@ void PololuBuzzer::playMode(unsigned char mode)
 // Returns true if it is still playing.
 unsigned char PololuBuzzer::playCheck()
 {
+#if defined(PB_ARDUINO_R4)
+  r4_checkNoteTimeout();
+#endif
   if(buzzerFinished && buzzerSequence != 0)
     nextNote();
   return buzzerSequence != 0;
