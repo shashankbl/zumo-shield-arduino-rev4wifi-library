@@ -47,8 +47,16 @@ void ZumoMotors::init2()
   ICR1 = 400;
 #elif defined(USE_ZM_R4_PWMOUT)
   // PwmOut owns the pin direction; no pinMode() needed for PWM_L / PWM_R.
-  pwmL.begin(20000.0f, 0.0f);   // 20 kHz carrier, 0% duty at start
-  pwmR.begin(20000.0f, 0.0f);
+  // Start at non-zero duty so the GPT channel actually enables its output —
+  // some Renesas core versions will leave the pin in GPIO/high-Z if begin()
+  // is called with duty_perc == 0.0f, and subsequent pulse_perc() calls
+  // then silently do nothing. Zero the duty immediately afterward so the
+  // motor doesn't twitch during init (DIR pins default LOW, so any brief
+  // pulse is forward-biased and <1 ms long).
+  pwmL.begin(20000.0f, 50.0f);
+  pwmR.begin(20000.0f, 50.0f);
+  pwmL.pulse_perc(0.0f);
+  pwmR.pulse_perc(0.0f);
 #else
   pinMode(PWM_L, OUTPUT);
   pinMode(PWM_R, OUTPUT);
