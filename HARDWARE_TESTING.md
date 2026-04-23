@@ -97,16 +97,21 @@ This is the most important first test because it exercises the new
 
 ## 4. Test the buzzer — `ZumoBuzzerExample`
 
-Exercises the `FspTimer` + `tone()` backend.
+Exercises the R4 backend: `tone(pin, freq, duration)` for the audio
+plus `millis()` polling inside `isPlaying()` / `playCheck()` for
+note-sequence advancement.
 
 1. `File → Examples → ZumoShield → ZumoBuzzerExample`.
-2. Upload. You should hear a short beep or melody.
+2. Upload. The Super Mario theme melody should play through on its own.
+3. Press the Zumo pushbutton (D12) to silence / restart the melody.
 
 **Expected behaviour**
-- Pressing the pushbutton triggers a melody on D3 (buzzer pin).
-- Notes advance on their own while `loop()` does other things —
-  this proves the `FspTimer` interrupt path is working
-  (`PLAY_AUTOMATIC` mode).
+- Melody plays note-by-note at the programmed rhythm — no stuttering,
+  no hung continuous tones.
+- Notes advance from inside `isPlaying()`, which the example polls in
+  its `loop()`. **On R4, if you write your own sketch that blocks the
+  main loop for longer than a note duration, the melody will stretch**
+  — this is a documented behavioural difference from AVR (see README).
 
 **Known differences vs the Uno R3** (documented in [README.md](README.md)
 under "Uno R4 support"):
@@ -116,11 +121,25 @@ under "Uno R4 support"):
   plays at 41 Hz.
 
 **If nothing plays at all:**
-- Check that you hear the buzzer click when the board resets (it shouldn't,
-  but any pop indicates the pin is wired).
-- Verify the `FspTimer` library shipped with the Renesas core — it's in
-  `~/.arduino15/packages/arduino/hardware/renesas_uno/<version>/libraries/FspTimer`.
-  If missing, reinstall the board package.
+- **Check the Zumo Shield's buzzer jumper first.** Most Zumo Shield
+  versions have a small jumper near the buzzer can that bridges D3 to
+  the buzzer's control transistor. If the jumper is missing or on the
+  wrong pins, the buzzer is electrically disconnected from D3 and
+  nothing your code does will produce sound. Photos and location:
+  [Zumo Shield user's guide §5](https://www.pololu.com/docs/0J57).
+  This is the #1 cause of a silent buzzer; rule it out before
+  suspecting the library.
+- **Verify the buzzer hardware with raw `tone()`.** Upload the
+  four-line smoke test below into a blank sketch — if it doesn't play
+  a clean 2-second beep, the problem is lower than this library
+  (jumper, wiring, or dead buzzer):
+  ```cpp
+  void setup() { tone(3, 1000); delay(2000); noTone(3); }
+  void loop()  {}
+  ```
+- **Confirm battery power.** The buzzer circuit is driven from VBAT
+  on most Zumo Shield versions, not USB 5 V. Switch the Zumo battery
+  pack on and verify fresh cells.
 - Confirm the compiler actually picked the R4 branch by adding a
   temporary `#warning "R4 path active"` at the top of the R4 block in
   [PololuBuzzer.cpp:14](PololuBuzzer.cpp#L14) and looking for it in the
@@ -246,7 +265,7 @@ When you report test results (or file a bug), please include:
 | --- | --- | --- |
 | Motor PWM (D9, D10) | `PwmOut` @ 20 kHz | [ZumoMotors.cpp](ZumoMotors.cpp) |
 | Motor direction (D7, D8) | `digitalWrite` | unchanged |
-| Buzzer (D3) | `tone()` + `FspTimer` @ 1 kHz | [PololuBuzzer.cpp](PololuBuzzer.cpp), [PololuBuzzer.h](PololuBuzzer.h) |
+| Buzzer (D3) | `tone(pin, freq, dur)` auto-stop + `millis()` polling in `isPlaying()` | [PololuBuzzer.cpp](PololuBuzzer.cpp), [PololuBuzzer.h](PololuBuzzer.h) |
 | Pushbutton (D12) | `digitalRead` w/ pull-up | unchanged |
 | Reflectance sensors (4, A3, 11, A0, A2, 5) | `micros()` pulse timing | unchanged |
 | IMU (I2C on SDA/SCL) | `Wire` | unchanged |

@@ -45,12 +45,13 @@ Renesas RA4M1 runs 5 V-tolerant I/O on the Uno header, `VIN` accepts the
 shield's 7.45 V boost output, and the motor-driver pins (D7–D10), buzzer (D3),
 and I2C pins line up with the R3 pinout. The RA4M1 does not have AVR Timer 1
 / Timer 2 / Timer 4, so the motor PWM and buzzer backends are re-implemented
-on R4 using the Renesas core's `PwmOut` (GPT-backed) and `FspTimer` + `tone()`.
+on R4 using the Renesas core's `PwmOut` (GPT-backed) for motors and
+Arduino's `tone()` + `millis()` polling for the buzzer.
 
 ### Requirements
 
 * **Arduino IDE 2.x** or Arduino CLI.
-* **Arduino Renesas Uno Boards** package (Tools → Board → Boards Manager → search for "Uno R4") — provides the RA4M1 core, `FspTimer`, and `PwmOut`.
+* **Arduino Renesas Uno Boards** package (Tools → Board → Boards Manager → search for "Uno R4") — provides the RA4M1 core and `PwmOut`.
 
 ### Known differences on Uno R4
 
@@ -70,9 +71,15 @@ same sketch on an Uno R3 — nothing else in the API changes.
   below 160 Hz via the `DIV_BY_10` flag; on R4, frequencies are rounded to
   the nearest whole Hz before being handed to `tone()`. Only affects notes
   below ~100 Hz.
-* **Note sequence timing is ms-accurate on R4.** `PLAY_AUTOMATIC` mode still
-  advances notes from an ISR, now driven by an `FspTimer` ticking at 1 kHz,
-  so note durations are exact to within 1 ms.
+* **`PLAY_AUTOMATIC` on R4 requires your loop to poll.** On AVR, note
+  sequences advance from a timer ISR in the background. On R4 the
+  advancement happens inside `isPlaying()` / `playCheck()` via a
+  `millis()` check, so your sketch's `loop()` has to call one of those
+  regularly (every ≤ ~50 ms ideally) for notes to advance on time. The
+  stock `ZumoBuzzerExample*` sketches already do this; if your own
+  sketch blocks the main loop for longer than a note duration, the
+  melody will stretch. Note durations themselves are still ms-accurate
+  against the clock — only the advance check is polled.
 
 ### Pins that must stay off-limits
 
@@ -178,7 +185,7 @@ functions" section above.
 
 ## Version history
 
-* **Fork — Uno R4 WiFi support (2026-04-22):** Added Arduino Uno R4 WiFi / Uno R4 Minima (Renesas RA4M1) support. `ZumoMotors` drives pins 9/10 through `PwmOut` at 20 kHz; `PololuBuzzer` uses `tone()` for the audio output and `FspTimer` at 1 kHz for note-duration timing. AVR (ATmega328P / ATmega32U4) paths are unchanged. Known limitation: buzzer volume and sub-Hz frequency resolution are not available on R4.
+* **Fork — Uno R4 WiFi support (2026-04-22):** Added Arduino Uno R4 WiFi / Uno R4 Minima (Renesas RA4M1) support. `ZumoMotors` drives pins 9/10 through `PwmOut` at 20 kHz; `PololuBuzzer` uses Arduino's `tone(pin, freq, duration)` for the audio output and `millis()` polling inside `isPlaying()` / `playCheck()` for note-sequence advancement. AVR (ATmega328P / ATmega32U4) paths are unchanged. Known limitations on R4: buzzer volume and sub-Hz frequency resolution are not available, and `PLAY_AUTOMATIC` requires the sketch's `loop()` to call `isPlaying()` / `playCheck()` regularly rather than advancing notes from an ISR.
 * 2.1.0 (2020-09-11): Added a ZumoIMU class that abstracts some details of the inertial sensors and supports different IMU types. The examples have been updated to use this class, and a few new examples have been added.
 * 2.0.0 (2018-03-15):
     * Forked [https://github.com/pololu/zumo-shield](https://github.com/pololu/zumo-shield)
