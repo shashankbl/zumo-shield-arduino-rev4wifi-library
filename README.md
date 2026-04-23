@@ -148,6 +148,13 @@ The Example sketches section of
 the [Zumo Shield user's guide](https://www.pololu.com/docs/0J57)
 describes some of these examples in more detail.
 
+**Fork-added example:** `LineFollowerInverted` mirrors the stock
+`LineFollower` but tracks a **white line on a dark surface** by
+passing `white_line = 1` to `QTRSensors::readLine()`. The calibration
+sweep, PID loop, and motor control are otherwise identical — useful
+if your arena uses light tape on dark stock rather than the default
+dark-on-light.
+
 ## Classes
 
 The main classes provided by the library are listed below:
