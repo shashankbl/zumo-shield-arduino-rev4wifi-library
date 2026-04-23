@@ -431,16 +431,22 @@ void QTRSensorsRC::readPrivate(unsigned int *sensor_values)
     for(i = 0; i < _numSensors; i++)
     {
         sensor_values[i] = _maxValue;
-        digitalWrite(_pins[i], HIGH);   // make sensor line an output
-        pinMode(_pins[i], OUTPUT);      // drive sensor line high
+        // Order matters: on Renesas RA4M1 (R4), pinMode() re-writes the full
+        // port-pin config and does not preserve the latched output value, so
+        // digitalWrite() must come AFTER pinMode(OUTPUT) or the line will
+        // sit at OUTPUT LOW and never charge. Safe on AVR too.
+        pinMode(_pins[i], OUTPUT);      // drive sensor line
+        digitalWrite(_pins[i], HIGH);   // high
     }
 
     delayMicroseconds(10);              // charge lines for 10 us
 
     for(i = 0; i < _numSensors; i++)
     {
+        // Same ordering concern: switch to INPUT first, then clear any latched
+        // pull-up. On R4 this is the reliable sequence; on AVR it is equivalent.
         pinMode(_pins[i], INPUT);       // make sensor line an input
-        digitalWrite(_pins[i], LOW);        // important: disable internal pull-up!
+        digitalWrite(_pins[i], LOW);    // important: disable internal pull-up!
     }
 
     unsigned long startTime = micros();
