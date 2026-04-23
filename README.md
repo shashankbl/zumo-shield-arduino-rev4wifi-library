@@ -1,8 +1,15 @@
-# Pololu Zumo Shield Arduino library
+# Pololu Zumo Shield Arduino library (Uno R4 WiFi fork)
 
-Version: 2.1.0 <br>
-Release date: 2020-09-11 <br>
-[www.pololu.com](https://www.pololu.com/)
+Fork author: **Shashank Bangalore Lakshman** <br>
+Fork date: 2026-04-22 <br>
+Upstream version: 2.1.0 (2020-09-11) — [www.pololu.com](https://www.pololu.com/)
+
+This is a fork of the official
+[Pololu Zumo Shield Arduino library](https://github.com/pololu/zumo-shield-arduino-library)
+that adds support for the **Arduino Uno R4 WiFi** and **Arduino Uno R4 Minima**
+(Renesas RA4M1) in addition to the AVR boards supported upstream. See
+[Uno R4 support](#uno-r4-support) below for details, caveats, and the small
+behavioural differences relative to the AVR port.
 
 ## Summary
 
@@ -21,6 +28,58 @@ For more information about the library and examples, please see the
 [Zumo Shield user's guide](https://www.pololu.com/docs/0J57).
 
 Please note that this library does NOT work with the Zumo 32U4 Robot, which is a very different product.  The Zumo 32U4 Robot has an integrated Arduino-compatible microcontroller.  If you have the Zumo 32U4 Robot, then you should not use this library and instead refer to the [Zumo 32U4 Robot documentation](https://www.pololu.com/docs/0J63).
+
+## Supported boards
+
+| Board | MCU | Status |
+| --- | --- | --- |
+| Arduino Uno R3 | ATmega328P | Supported (upstream) |
+| Arduino Leonardo / A-Star 32U4 | ATmega32U4 | Supported (upstream) |
+| Arduino Uno R4 WiFi | Renesas RA4M1 | **Supported (this fork)** |
+| Arduino Uno R4 Minima | Renesas RA4M1 | **Supported (this fork)** |
+
+## Uno R4 support
+
+The Zumo Shield v1.3 is electrically compatible with the Arduino Uno R4: the R4's
+Renesas RA4M1 runs 5 V-tolerant I/O on the Uno header, `VIN` accepts the
+shield's 7.45 V boost output, and the motor-driver pins (D7–D10), buzzer (D3),
+and I2C pins line up with the R3 pinout. The RA4M1 does not have AVR Timer 1
+/ Timer 2 / Timer 4, so the motor PWM and buzzer backends are re-implemented
+on R4 using the Renesas core's `PwmOut` (GPT-backed) and `FspTimer` + `tone()`.
+
+### Requirements
+
+* **Arduino IDE 2.x** or Arduino CLI.
+* **Arduino Renesas Uno Boards** package (Tools → Board → Boards Manager → search for "Uno R4") — provides the RA4M1 core, `FspTimer`, and `PwmOut`.
+
+### Known differences on Uno R4
+
+These are the only user-visible behavioural changes relative to running the
+same sketch on an Uno R3 — nothing else in the API changes.
+
+* **Motor PWM carrier is still 20 kHz.** On R4, `ZumoMotors` uses `PwmOut` on
+  pins 9 and 10 to drive the DRV8835 at 20 kHz, matching the AVR port (above
+  the audible range). Speed range and API (`setSpeeds`, `setLeftSpeed`, etc.)
+  are unchanged.
+* **Buzzer volume is fixed at ~50 % duty.** R4 uses Arduino's `tone()` for the
+  buzzer output, which drives a fixed-duty square wave. The `volume`
+  argument to `playFrequency()` / `playNote()` / `play()` is still accepted
+  for API compatibility but is effectively ignored on R4 (all non-zero
+  volumes play at full volume; volume 0 remains silent).
+* **Buzzer frequency resolution is 1 Hz.** AVR supports 0.1 Hz resolution
+  below 160 Hz via the `DIV_BY_10` flag; on R4, frequencies are rounded to
+  the nearest whole Hz before being handed to `tone()`. Only affects notes
+  below ~100 Hz.
+* **Note sequence timing is ms-accurate on R4.** `PLAY_AUTOMATIC` mode still
+  advances notes from an ISR, now driven by an `FspTimer` ticking at 1 kHz,
+  so note durations are exact to within 1 ms.
+
+### Pins that must stay off-limits
+
+The R4 WiFi adds a 3.3 V-only Qwiic connector and ESP32-S3 header that the
+original Uno R3 does not have. Those headers are **not** 5 V tolerant — don't
+wire 5 V Zumo expansion boards (sensor array, etc.) to them. The standard
+Uno header pins that the Zumo Shield actually uses are unaffected.
 
 ## Getting started
 
@@ -119,6 +178,7 @@ functions" section above.
 
 ## Version history
 
+* **Fork — Uno R4 WiFi support (2026-04-22):** Added Arduino Uno R4 WiFi / Uno R4 Minima (Renesas RA4M1) support. `ZumoMotors` drives pins 9/10 through `PwmOut` at 20 kHz; `PololuBuzzer` uses `tone()` for the audio output and `FspTimer` at 1 kHz for note-duration timing. AVR (ATmega328P / ATmega32U4) paths are unchanged. Known limitation: buzzer volume and sub-Hz frequency resolution are not available on R4.
 * 2.1.0 (2020-09-11): Added a ZumoIMU class that abstracts some details of the inertial sensors and supports different IMU types. The examples have been updated to use this class, and a few new examples have been added.
 * 2.0.0 (2018-03-15):
     * Forked [https://github.com/pololu/zumo-shield](https://github.com/pololu/zumo-shield)

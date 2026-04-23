@@ -7,6 +7,14 @@
 
 #if defined(__AVR_ATmega168__) || defined(__AVR_ATmega328P__) || defined (__AVR_ATmega32U4__)
   #define USE_20KHZ_PWM
+#elif defined(ARDUINO_UNOR4_WIFI) || defined(ARDUINO_UNOR4_MINIMA)
+  // On the Renesas RA4M1 we drive the motors through the PwmOut class (GPT-backed)
+  // so we can pick our own 20 kHz frequency instead of the ~490 Hz default from
+  // analogWrite() — eliminating the audible whine from the DRV8835.
+  #define USE_ZM_R4_PWMOUT
+  #include "pwm.h"
+  static PwmOut pwmL(PWM_L);
+  static PwmOut pwmR(PWM_R);
 #endif
 
 static boolean flipLeft = false;
@@ -20,12 +28,12 @@ ZumoMotors::ZumoMotors()
 // initialize timer1 to generate the proper PWM outputs to the motor drivers
 void ZumoMotors::init2()
 {
-  pinMode(PWM_L,  OUTPUT);
-  pinMode(PWM_R,  OUTPUT);
   pinMode(DIR_L, OUTPUT);
   pinMode(DIR_R, OUTPUT);
 
 #ifdef USE_20KHZ_PWM
+  pinMode(PWM_L, OUTPUT);
+  pinMode(PWM_R, OUTPUT);
   // Timer 1 configuration
   // prescaler: clockI/O / 1
   // outputs enabled
@@ -37,6 +45,13 @@ void ZumoMotors::init2()
   TCCR1A = 0b10100000;
   TCCR1B = 0b00010001;
   ICR1 = 400;
+#elif defined(USE_ZM_R4_PWMOUT)
+  // PwmOut owns the pin direction; no pinMode() needed for PWM_L / PWM_R.
+  pwmL.begin(20000.0f, 0.0f);   // 20 kHz carrier, 0% duty at start
+  pwmR.begin(20000.0f, 0.0f);
+#else
+  pinMode(PWM_L, OUTPUT);
+  pinMode(PWM_R, OUTPUT);
 #endif
 }
 
@@ -69,9 +84,12 @@ void ZumoMotors::setLeftSpeed(int speed)
     
 #ifdef USE_20KHZ_PWM
   OCR1B = speed;
+#elif defined(USE_ZM_R4_PWMOUT)
+  // speed range is 0..400; PwmOut::pulse_perc expects 0.0..100.0
+  pwmL.pulse_perc(speed * 0.25f);
 #else
   analogWrite(PWM_L, speed * 51 / 80); // default to using analogWrite, mapping 400 to 255
-#endif 
+#endif
 
   if (reverse ^ flipLeft) // flip if speed was negative or flipLeft setting is active, but not both
     digitalWrite(DIR_L, HIGH);
@@ -96,6 +114,8 @@ void ZumoMotors::setRightSpeed(int speed)
     
 #ifdef USE_20KHZ_PWM
   OCR1A = speed;
+#elif defined(USE_ZM_R4_PWMOUT)
+  pwmR.pulse_perc(speed * 0.25f);
 #else
   analogWrite(PWM_R, speed * 51 / 80); // default to using analogWrite, mapping 400 to 255
 #endif

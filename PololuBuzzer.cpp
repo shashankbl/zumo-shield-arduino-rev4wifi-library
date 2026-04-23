@@ -1,9 +1,28 @@
 // Copyright Pololu Corporation.  For more information, see http://www.pololu.com/
 
-#include <avr/interrupt.h>
+#include <Arduino.h>
+#if defined(__AVR__)
+  #include <avr/interrupt.h>
+#endif
 #include "PololuBuzzer.h"
 
-#ifdef __AVR_ATmega32U4__
+#if defined(ARDUINO_UNOR4_WIFI) || defined(ARDUINO_UNOR4_MINIMA)
+  #define PB_ARDUINO_R4
+  #include <FspTimer.h>
+#endif
+
+#if defined(PB_ARDUINO_R4)
+
+// D3 on the Uno R3 header — same physical pin the Zumo Shield uses for the buzzer.
+#define BUZZER_PIN  3
+
+static FspTimer buzzerTimer;
+static void buzzerTimerISR();
+
+#define ENABLE_TIMER_INTERRUPT()   buzzerTimer.start()
+#define DISABLE_TIMER_INTERRUPT()  buzzerTimer.stop()
+
+#elif defined(__AVR_ATmega32U4__)
 
 // PD7 (OC4D)
 #define BUZZER_DDR  DDRD
@@ -59,7 +78,24 @@ static volatile unsigned char staccato_rest_duration;  // duration of a staccato
 
 static void nextNote();
 
-#ifdef __AVR_ATmega32U4__
+#if defined(PB_ARDUINO_R4)
+
+// FspTimer fires at 1 kHz; each tick decrements buzzerTimeout (set to the note
+// duration in ms by playFrequency). When the note is over we silence tone() and,
+// if a sequence is playing in PLAY_AUTOMATIC, advance to the next note.
+static void buzzerTimerISR()
+{
+  if (buzzerTimeout-- == 0)
+  {
+    DISABLE_TIMER_INTERRUPT();
+    noTone(BUZZER_PIN);
+    buzzerFinished = 1;
+    if (buzzerSequence && (play_mode_setting == PLAY_AUTOMATIC))
+      nextNote();
+  }
+}
+
+#elif defined(__AVR_ATmega32U4__)
 
 // Timer4 overflow interrupt
 ISR (TIMER4_OVF_vect)
@@ -110,9 +146,31 @@ inline void PololuBuzzer::init()
   }
 }
 
-// initializes timer4 (32U4) or timer2 (328P) for buzzer control
+// initializes timer4 (32U4), timer2 (328P), or an FspTimer (R4) for buzzer control
 void PololuBuzzer::init2()
 {
+#if defined(PB_ARDUINO_R4)
+  pinMode(BUZZER_PIN, OUTPUT);
+
+  // Claim a free GPT channel to drive the 1 kHz timeout tick. tone() uses AGT1
+  // internally on R4, so GPT and AGT don't fight over the same peripheral.
+  uint8_t timerType = GPT_TIMER;
+  int8_t  channel   = FspTimer::get_available_timer(timerType);
+  if (channel < 0)
+  {
+    // all GPT channels taken — fall back to a forced pwm-reserved channel
+    channel = FspTimer::get_available_timer(timerType, true);
+  }
+
+  buzzerTimer.begin(TIMER_MODE_PERIODIC, timerType, channel, 1000.0f, 0.0f);
+  buzzerTimer.setup_overflow_irq(12, buzzerTimerISR);
+  buzzerTimer.open();
+  // timer stays stopped until ENABLE_TIMER_INTERRUPT() runs in playFrequency()
+  interrupts();
+  return;
+#endif
+
+#if defined(__AVR__)
   DISABLE_TIMER_INTERRUPT();
 
 #ifdef __AVR_ATmega32U4__
@@ -185,6 +243,7 @@ void PololuBuzzer::init2()
 
   BUZZER_DDR |= BUZZER;    // buzzer pin set as an output
   sei();
+#endif  // __AVR__
 }
 
 
@@ -217,6 +276,30 @@ void PololuBuzzer::playFrequency(unsigned int freq, unsigned int dur,
   if (multiplier == 1 && freq > 10000)
     freq = 10000;      // max frequency allowed is 10kHz
 
+#if defined(PB_ARDUINO_R4)
+  // On R4 we don't compute AVR timer divisors — tone() drives the output
+  // directly. Convert 0.1 Hz units back to Hz if needed.
+  unsigned int hz = (multiplier == 10) ? ((freq + 5) / 10) : freq;
+
+  // Match the AVR convention: freq == 1000 with volume == 0 means "silent note,
+  // exact ms timeout". Skip tone() in that case.
+  if (volume == 0)
+  {
+    noTone(BUZZER_PIN);
+  }
+  else
+  {
+    tone(BUZZER_PIN, hz);
+  }
+
+  DISABLE_TIMER_INTERRUPT();
+  // FspTimer ticks at 1 kHz, so timeout is exactly the note duration in ms.
+  buzzerTimeout = dur;
+  ENABLE_TIMER_INTERRUPT();
+  return;
+#endif
+
+#if defined(__AVR__)
 #ifdef __AVR_ATmega32U4__
   unsigned long top;
   unsigned char dividerExponent = 0;
@@ -278,6 +361,7 @@ void PololuBuzzer::playFrequency(unsigned int freq, unsigned int dur,
 #endif
 
   ENABLE_TIMER_INTERRUPT();
+#endif  // __AVR__
 }
 
 
@@ -484,6 +568,14 @@ void PololuBuzzer::stopPlaying()
 {
   DISABLE_TIMER_INTERRUPT();          // disable interrupts
 
+#if defined(PB_ARDUINO_R4)
+  noTone(BUZZER_PIN);
+  buzzerFinished = 1;
+  buzzerSequence = 0;
+  return;
+#endif
+
+#if defined(__AVR__)
 #ifdef __AVR_ATmega32U4__
   TCCR4B = (TCCR4B & 0xF0) | TIMER4_CLK_8;  // select IO clock
   unsigned int top = (F_CPU/16) / 1000;     // set TOP for freq = 1 kHz:
@@ -496,6 +588,7 @@ void PololuBuzzer::stopPlaying()
   OCR2A = (F_CPU/64) / 1000;                // set TOP for freq = 1 kHz
   OCR2B = 0;                                // 0% duty cycle
 #endif
+#endif  // __AVR__
 
   buzzerFinished = 1;
   buzzerSequence = 0;

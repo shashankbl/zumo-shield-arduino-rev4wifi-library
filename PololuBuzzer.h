@@ -35,7 +35,11 @@
 
 #pragma once
 
-#include <avr/pgmspace.h>
+#if defined(__AVR__)
+  #include <avr/pgmspace.h>
+#else
+  #include <Arduino.h>
+#endif
 
 /*! \brief Specifies that the sequence of notes will play with no further action
  *  required by the user. */
