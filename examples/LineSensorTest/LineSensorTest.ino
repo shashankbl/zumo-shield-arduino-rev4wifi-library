@@ -17,9 +17,11 @@ emitters are on during the reading.
 ZumoReflectanceSensorArray reflectanceSensors;
 Pushbutton button(ZUMO_BUTTON);
 
-// Define an array for holding sensor values.
+// Define an array for holding sensor values. Must be `unsigned int` to
+// match the QTRSensors::read() API on every platform — `uint16_t` is only
+// equivalent on AVR where `unsigned int` happens to be 16-bit.
 #define NUM_SENSORS 6
-uint16_t sensorValues[NUM_SENSORS];
+unsigned int sensorValues[NUM_SENSORS];
 
 bool useEmitters = true;
 
@@ -27,6 +29,7 @@ uint8_t selectedSensorIndex = 0;
 
 void setup()
 {
+  Serial.begin(9600);
   reflectanceSensors.init();
 }
 
