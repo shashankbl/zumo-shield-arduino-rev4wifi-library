@@ -28,6 +28,7 @@ char report[120];
 
 void setup()
 {
+  Serial.begin(9600);
   Wire.begin();
 
   if (!imu.init())
